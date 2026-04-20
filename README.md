@@ -89,6 +89,8 @@ cp .env.example .env
 
 ### 3. Start services
 
+PostgreSQL, Redis, and ChromaDB run via Docker Compose. ChromaDB binds to port 8000.
+
 ```bash
 docker compose up -d
 ```
@@ -101,11 +103,27 @@ pip install -r requirements.txt
 
 ### 5. Run the API
 
+The API runs on port **8800** (ChromaDB occupies 8000).
+
 ```bash
-uvicorn api.main:app --reload
+uvicorn api.main:app --reload --port 8800
 ```
 
-The API will be available at `http://localhost:8000`. Interactive docs at `http://localhost:8000/docs`.
+API available at `http://localhost:8800`. Interactive docs at `http://localhost:8800/docs`.
+
+### 6. Run the UI
+
+The Streamlit UI connects to the API at `http://127.0.0.1:8800`.
+
+```bash
+streamlit run ui/app.py
+```
+
+UI available at `http://localhost:8501`.
+
+### First-time setup
+
+Users must be registered before using the chat. Open the UI, go to **Profile → Create new user**, fill in your details, and submit. The user is saved locally and registered in PostgreSQL — you can load them again in future sessions from the same tab.
 
 ---
 
@@ -131,7 +149,9 @@ Unit tests use `fakeredis` and mocked LLMs. Integration tests require live Postg
 │   └── specialized_agent/       # Nutrition, Exercise, Recovery agents + base class
 ├── api/
 │   ├── main.py                  # FastAPI app + lifespan
-│   └── routes.py                # /chat and /chat/resume endpoints
+│   └── routes/                  # chat, users, records endpoints
+├── ui/
+│   └── app.py                   # Streamlit UI (Profile, Chat, Data pages)
 ├── core/
 │   ├── graph.py                 # LangGraph graph construction
 │   ├── state.py                 # GlobalState, AgentState, reducers
