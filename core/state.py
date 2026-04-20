@@ -78,7 +78,6 @@ class AgentState(TypedDict):
     working_messages: Annotated[List[AnyMessage], clearable_message_add]
 
     # Shared
-    global_messages: Annotated[List[AnyMessage], operator.add]
     user_profile: Annotated[UserProfileSchema, keep_last]
     user_id: Annotated[str, keep_last]
     plans: Annotated[Dict[AgentName, Task], merge_plans]

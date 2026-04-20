@@ -33,13 +33,16 @@ class RedisManager:
     def _get_history_key(self, user_id: str) -> str:
         return f"user:{user_id}:context:history"
 
-    def add_message(self, user_id: str, role: str, content: str) -> None:
+    def add_message(self, user_id: str, role: str, content: str, score: float = None) -> None:
         """
         Appends a message to the user's chat history and removes messages older than 24 hours.
+        score: explicit sort key (Unix timestamp). When two messages in the same turn are written
+               back-to-back, the caller should pass distinct scores so that Redis sorted-set
+               tie-breaking (lexicographic) never reorders them.
         """
         key = self._get_history_key(user_id)
         message = json.dumps({"role": role, "content": content})
-        current_timestamp = time.time()
+        current_timestamp = score if score is not None else time.time()
 
         # Using a pipeline ensures both commands execute atomically
         pipeline = self.client.pipeline()

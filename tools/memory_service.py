@@ -172,12 +172,14 @@ class UnifiedMemoryManager:
     # REDIS TOOLS (Short-term Context)
     # ==========================================
 
-    def add_to_conversation_history(self, user_id: str, role: str, content: str) -> None:
+    def add_to_conversation_history(self, user_id: str, role: str, content: str, score: float = None) -> None:
         """
         Appends a message to the user's short-term conversation history in Redis.
         Messages older than 24 hours are automatically pruned.
+        score: explicit sort key passed through to RedisManager. Use distinct values when
+               writing human/AI messages in the same turn to guarantee correct ordering.
         """
-        self.redis.add_message(user_id=user_id, role=role, content=content)
+        self.redis.add_message(user_id=user_id, role=role, content=content, score=score)
 
     def get_conversation_history(self, user_id: str) -> List[Dict[str, Any]]:
         """

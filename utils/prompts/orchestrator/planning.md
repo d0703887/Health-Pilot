@@ -33,6 +33,7 @@ First, is there query impossible to act on without more information?
 - The user's intent is clear enough to act on even with some ambiguity. 
 
 If clarification is needed: populate `clarification_questions` and leave `tasks` **empty**.
+- Every option must be a concrete answer (e.g., "Running", "7 hours"). Never generate an option that defers the answer.
 
 {% if clarification_answers %}
 # Clarification Answers
@@ -65,7 +66,7 @@ If no clarification is needed:
       "question": "<question text>",
       "options": [
         {"id": "<option_id>", "label": "<display text>"}
-      ],
+      ]
     }
   ],
   "tasks": [

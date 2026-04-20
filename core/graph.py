@@ -1,7 +1,15 @@
 import uuid
+import time
 import warnings
 import logging
 from concurrent.futures import ThreadPoolExecutor
+
+import os
+from core.config import settings
+os.environ["LANGCHAIN_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = settings.LANGSMITH_API_KEY
+
+logger = logging.getLogger(__name__)
 warnings.filterwarnings(
     "ignore",
     message="Pydantic serializer warnings",
@@ -435,12 +443,12 @@ class Graph:
 
     def _extract_memories(self, user_id: str, messages: list) -> None:
         """Runs in a background thread. Extracts insights and writes to ChromaDB."""
+        logger.debug("Memory extraction started | user=%s | messages=%d", user_id, len(messages))
         try:
             self.memory_extractor.extract_and_store(user_id, messages, self.memory_manager)
+            logger.debug("Memory extraction complete | user=%s", user_id)
         except Exception:
-            logging.getLogger(__name__).exception(
-                "Background memory extraction failed for user %s", user_id
-            )
+            logger.exception("Memory extraction failed | user=%s", user_id)
 
     def _trigger_extraction_if_ready(self, user_id: str) -> None:
         """Checks the cursor and submits extraction to the thread pool if threshold is met."""
@@ -452,39 +460,56 @@ class Graph:
     def run(self, user_id: str, user_query: str) -> dict:
         thread_id = str(uuid.uuid4())  # fresh per invocation — no checkpoint conflict
         config = {"configurable": {"thread_id": thread_id}}
+
+        logger.info("Run started | user=%s | thread=%s | query=%.80s", user_id, thread_id, user_query)
         initial_state = self._build_initial_state(user_id, user_query)
+
         final_state = self.graph.invoke(initial_state, config=config)
 
         if final_state.get("__interrupt__"):
             interrupts = [{"id": intr.id, **intr.value} for intr in final_state["__interrupt__"]]
+            logger.info("Run paused for clarification | user=%s | thread=%s | interrupts=%d",
+                        user_id, thread_id, len(interrupts))
             return {"type": "clarification", "thread_id": thread_id, "interrupts": interrupts}
 
         # Persist the new turn to Redis after the graph completes.
-        self.memory_manager.add_to_conversation_history(user_id, role="human", content=user_query)
-        self.memory_manager.add_to_conversation_history(user_id, role="ai", content=final_state["global_messages"][-1].content)
+        # Pass explicit scores so human always sorts before AI even when time.time()
+        # returns the same float for both back-to-back calls (e.g. on Windows ~15ms clock).
+        t = time.time()
+        self.memory_manager.add_to_conversation_history(user_id, role="human", content=user_query, score=t)
+        self.memory_manager.add_to_conversation_history(user_id, role="ai", content=final_state["global_messages"][-1].content, score=t + 0.001)
         self._trigger_extraction_if_ready(user_id)
 
+        logger.info("Run complete | user=%s | thread=%s | llm_calls=%d",
+                    user_id, thread_id, final_state.get("total_llm_calls", 0))
         return {"type": "answer", "content": final_state["global_messages"][-1].content}
 
     def resume(self, thread_id: str, answers: dict[str, str]) -> dict:
         """Resume a paused graph. answers maps each interrupt id to the user's response."""
+        logger.info("Resume | thread=%s", thread_id)
         config = {"configurable": {"thread_id": thread_id}}
         final_state = self.graph.invoke(Command(resume=answers), config=config)
 
         if final_state.get("__interrupt__"):
             interrupts = [{"id": intr.id, **intr.value} for intr in final_state["__interrupt__"]]
+            logger.info("Resume paused again for clarification | thread=%s | interrupts=%d",
+                        thread_id, len(interrupts))
             return {"type": "clarification", "thread_id": thread_id, "interrupts": interrupts}
 
         user_id = final_state["user_id"]
         user_query = final_state["user_query"]
-        self.memory_manager.add_to_conversation_history(user_id, role="human", content=user_query)
-        self.memory_manager.add_to_conversation_history(user_id, role="ai", content=final_state["global_messages"][-1].content)
+        t = time.time()
+        self.memory_manager.add_to_conversation_history(user_id, role="human", content=user_query, score=t)
+        self.memory_manager.add_to_conversation_history(user_id, role="ai", content=final_state["global_messages"][-1].content, score=t + 0.001)
         self._trigger_extraction_if_ready(user_id)
 
+        logger.info("Resume complete | user=%s | thread=%s | llm_calls=%d",
+                    user_id, thread_id, final_state.get("total_llm_calls", 0))
         return {"type": "answer", "content": final_state["global_messages"][-1].content}
 
     def close(self):
         """Closes underlying connections managed by the Graph object."""
+        logger.info("Closing Graph resources...")
         self._executor.shutdown(wait=False)
         if self.sql_engine:
             self.sql_engine.dispose()
@@ -644,11 +669,12 @@ if __name__ == '__main__':
         # ("Case 10 - Clarification (vague sleep)", "I just woke up, log my sleep."),
         #
         # --- History-aware cases (require seeded data) ---
-        # ("Case 11 - Weekly nutrition review", "How has my nutrition been this past week? Am I eating enough protein for muscle gain?"),
+        ("Case 11 - Weekly nutrition review", "How has my nutrition been this past week? Am I eating enough protein for muscle gain?"),
+        ("Case 11-continued", "What do you mean protein is too low?")
         # ("Case 12 - Weekly training review", "Give me a summary of my training this week. Is my volume and frequency good for muscle gain?"),
-        #         # ("Case 13 - Sleep + training cross-domain", "I've been feeling tired and my sleep has been inconsistent. Should I still train hard today?"),
-        #         # ("Case 14 - Cross-domain weekly summary", "How has my overall week been in terms of food, training, and sleep? What should I focus on next week?"),
-        #         # ("Case 15 - Nutrition gap advice", "My muscle gain has been slow. Based on last week's data, what should I change?"),
+        # ("Case 13 - Sleep + training cross-domain", "I've been feeling tired and my sleep has been inconsistent. Should I still train hard today?"),
+        # ("Case 14 - Cross-domain weekly summary", "How has my overall week been in terms of food, training, and sleep? What should I focus on next week?"),
+        # ("Case 15 - Nutrition gap advice", "My muscle gain has been slow. Based on last week's data, what should I change?"),
     ]
 
     from rich.console import Console
